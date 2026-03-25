@@ -1,208 +1,127 @@
 # nmap
-Scans subnets using nmap and visualizes network topology in a browser.  
-  
-Table of Contents  
-=================  
 
-   * [nmap](#nmap)  
-      * [Features](#features)
-      * [Network diagram](#network-diagram)  
-      * [Help](#help)  
-      * [Display host properties](#display-host-properties)  
-      * [Prerequisites](#prerequisites)  
-      * [Installation instructions](#installation-instructions)
-         * [Install packages](#install-packages)
-         * [Test packages](#test-packages)
-         * [Clone repo](#clone-repo)
-         * [Install gojs](#install-gojs)
-      * [Run nmapscan.pl](#run-nmapscanpl)
-      * [Nmap video](#nmap-video)
-  
-## Features
-  
-* Performs OS detection and port scanning.
-* Tracks subnet(s) gateways and route to internet.
-* Shows network diagram of subnets with hosts.
-* Use the mouse to drag the host objects around.
-* Displays MAC address, vendor type, IP address, hostname, gateway, netmask, OS type, etc.
-* Click on the icons in the corners of the host objects to display the host properties.
+This repository now has two tracks:
 
-## Network diagram
-[![nmap scan](https://raw.githubusercontent.com/tedsluis/nmap/master/img/nmapscan.jpg)](https://raw.githubusercontent.com/tedsluis/nmap/master/img/nmapscan.jpg)
- 
-## Help  
-  
-'nmapscan.pl' is a commandline script written in Perl. It creates 'map.html' which contains html, javascript and the network topology data.  
-  
-````
-./nmapscan.pl -help
-Help
+1. The original Perl implementation in [`nmapscan.pl`](./nmapscan.pl), which shells out heavily, parses human-readable command output, and generates a static [`map.html`](./map.html) that depends on GoJS.
+2. A new Go rewrite prototype under [`cmd/netmap`](./cmd/netmap), built around structured `nmap` XML ingestion, a lightweight web UI, and MikroTik-aware bridge/VLAN analysis.
 
-Usage: 
-       ./nmapscan.pl 
-Optional:
-       ./nmapscan.pl -subnet <cidr>[,<cidr>]                   Subnet(s) in CIDR notation.
-       ./nmapscan.pl -debug                                    Display debug info.
-       ./nmapscan.pl -help                                     This helptext.
+The rewrite target is not a line-by-line port. The goal is to replace the slowest and hardest-to-maintain parts of the old tool with a cleaner pipeline:
 
-Example:
-       ./nmapscan.pl -subnet 192.168.1.0/24,192.168.100.0/24
+* discover with `nmap` using XML output instead of fragile text parsing
+* model topology as explicit Go structs
+* expose topology over JSON and render it in the browser without GoJS
+* enrich the model with RouterOS REST data when a MikroTik device is available
+* surface bridge/VLAN mistakes, especially the MikroTik-specific cases that are easy to miss
 
-View result 'map.html' in a webbrowser.  
+## Why rewrite
 
-CIDR is <network>/<netbits>. 
-Lookup your Netbits:
-+------+----------+------------------------------------+
-| Net  | Number   |                                    |
-| bits | of hosts |  Netmask                           |
-+------+----------+------------------------------------+
-| /8   | 16777214 |  255.0.0.0                         |
-| /9   | 8388606  |  255.128.0.0                       |
-| /10  | 4194302  |  255.192.0.0                       |
-| /11  | 2097150  |  255.224.0.0                       |
-| /12  | 1048574  |  255.240.0.0                       |
-| /13  | 524286   |  255.248.0.0                       |
-| /14  | 262142   |  255.252.0.0                       |
-| /15  | 131070   |  255.254.0.0                       |
-| /16  | 65534    |  255.255.0.0                       |
-| /17  | 32766    |  255.255.128.0                     |
-| /18  | 16382    |  255.255.192.0                     |
-| /19  | 8190     |  255.255.224.0                     |
-| /20  | 4094     |  255.255.240.0                     |
-| /21  | 2046     |  255.255.248.0                     |
-| /22  | 1022     |  255.255.252.0                     |
-| /23  | 510      |  255.255.254.0                     |
-| /24  | 254      |  255.255.255.0                     |
-| /25  | 126      |  255.255.255.128                   |
-| /26  | 62       |  255.255.255.192                   |
-| /27  | 30       |  255.255.255.224                   |
-| /28  | 14       |  255.255.255.240                   |
-| /29  | 6        |  255.255.255.248                   |
-| /30  | 2        |  255.255.255.252                   |
-| /31  | -        |  point to point links only         |
-| /32  | 1        |  255.255.255.255 single IP address |
-+------+----------+------------------------------------+
-Notes: 
-   - Number of hosts = usable number of hosts.
-   - CIDR = network address + /netbits, for example: 192.168.1.0/24
-   - Instead of the network address, any IP within the subnet is accepted.
-   - Be sure 'nmap', 'traceroute', 'iproute' and 'gojs' are installed!
-   - You may need to do sudo (to become root) to run nmap: $ sudo ./nmapscan.pl -subnet 192.168.1.0/24
-````
-## Display host properties  
-  
-Click on the icons in the corners of the hosts object to display the host properties. There are 3 different types: Basic, detailed and port properties.  
-   
-Top right corner: Basisc host info.  
-[![nmap scan basics](https://raw.githubusercontent.com/tedsluis/nmap/master/img/basics_screenshot.jpg)](https://raw.githubusercontent.com/tedsluis/nmap/master/img/basics_screenshot.jpg)
-   
-Bottom right corner: Host details:   
-[![nmap scan details](https://raw.githubusercontent.com/tedsluis/nmap/master/img/details_screenshot.jpg)](https://raw.githubusercontent.com/tedsluis/nmap/master/img/details_screenshot.jpg)
-    
-Top left corner: Port host info:  
-[![nmap scan ports](https://raw.githubusercontent.com/tedsluis/nmap/master/img/ports_screenshot.jpg)](https://raw.githubusercontent.com/tedsluis/nmap/master/img/ports_screenshot.jpg)
+The current Perl app works, but it has structural issues that make it expensive to evolve:
 
-## Prerequisites  
+* one 1000+ line script owns discovery, parsing, inference, caching, and presentation
+* the browser output is generated as a single static HTML artifact
+* it depends on a proprietary diagramming library
+* it relies on slow scan defaults such as `nmap -A`, plus repeated traceroutes
+* extending it for vendor-specific logic such as MikroTik bridge/VLAN analysis is awkward
 
-* nmap  
-* traceroute  
-* iproute
-* perl 
-* gojs (check the license)  
-* root permissions  
+## Go Prototype
 
-note: If your system does not meet these requirements then follow the installation instructions.
+The new prototype currently provides:
 
-## Installation instructions
+* a Go HTTP server that serves topology JSON and a browser UI
+* `nmap` scan profiles:
+  * `discovery` uses host discovery only
+  * `balanced` adds service and OS fingerprinting
+  * `deep` uses `-A`
+* import of existing `nmap` XML files through `--nmap-xml`
+* optional MikroTik RouterOS REST collection for:
+  * `/interface/bridge`
+  * `/interface/bridge/port`
+  * `/interface/bridge/vlan`
+  * `/ip/address`
+* MikroTik bridge/VLAN findings for:
+  * multiple VLAN IDs mixed into one access-port VLAN entry
+  * likely CPU-port exposure via dynamic untagged VLAN 1
+  * trunk ports that are carrying tagged traffic without ingress filtering and tagged-only frame admission
+  * trunk PVID matching the bridge PVID
 
-### Install packages
-  
-Ubuntu/Debian/Raspbian  
-````
-$ sudo apt-get install nmap traceroute iproute perl git wget  
-````
-   
-Centos/RHEL  
-````
-$ yum install nmap traceroute iproute perl git wget   
-````
-  
-Fedora  
-````
-$ dnf install nmap traceroute iproute perl git wget 
-````
-   
-### Test packages  
-  
-To test nmap (specify our own subnet):  
-````
-$ nmap -O -n 192.168.1.0/24  
-````
-  
-To test traceroute:  
-````
-$ traceroute 8.8.8.8   
-````
-  
-To test iproute:
-````
-$ ip add
-````
-   
-### Clone repo  
-  
-Clone the repo to your locale host:
-````
-$ mkdir ~/git
-$ cd ~/git
-$ git clone https://github.com/tedsluis/nmap.git
-$ cd ~/git/nmap
-````
-   
-### Install GoJS
-  
-To install the GoJS framework:  
-````
-$ cd ~/git/nmap
-$ wget https://gojs.net/latest/release/go.js
-````
-Note: read the license info!
-    
-## Run nmapscan.pl
-  
-To run it (specify our own subnets):  
-````
-$ ./nmapscan.pl -subnet 192.168.1.0/24,192.168.11.0/24 
+## Quick Start
 
-Interface=enp2s0 (ip=192.168.11.80)
-Interface=virbr0 (ip=192.168.122.1)
-Host gateway=192.168.11.1
-  192.168.1.0/24   (subnetwork=192.168.1.0/24,   netbit=24, subnetmask=255.255.255.0, network=192.168.1.0,   broadcast=192.168.1.255),   number of IP's=254
-  192.168.11.0/24  (subnetwork=192.168.11.0/24,  netbit=24, subnetmask=255.255.255.0, network=192.168.11.0,  broadcast=192.168.11.255),  number of IP's=254
-  192.168.122.1/24 (subnetwork=192.168.122.0/24, netbit=24, subnetmask=255.255.255.0, network=192.168.122.0, broadcast=192.168.122.255), number of IP's=254
-````
-Depeding on your system and network scanning will take quite a while! On a raspberry pi it can even take up to an hour!    
-Ones it is finshed you can view 'map.html' is a web browser.  
-  
-=======
-## Nmap video  
-   
-Watch a video at youtube: https://youtu.be/DMpabcP0r_U   
-[![Alt text](https://img.youtube.com/vi/DMpabcP0r_U/0.jpg)](https://www.youtube.com/watch?v=DMpabcP0r_U)   
-  
-## GoJS framework   
-  
-If you wish to use the GoJS library for your private evaluation, you may do so only under the terms of the Evaluation License Agreement.
-* http://gojs.net/latest/doc/download.html
-* http://gojs.net/latest/doc/license.html
-  
+Run the demo dataset:
 
----------------------------  
-  
-Ted Sluis
-ted.sluis@gmail.com  
-https://www.youtube.com/tedsluis  
+```bash
+go run ./cmd/netmap --demo
+```
 
-  
+Then open `http://localhost:8080`.
 
+Run against live subnets with a faster default profile:
 
+```bash
+go run ./cmd/netmap --subnets 192.168.1.0/24,192.168.10.0/24 --profile discovery
+```
+
+Import existing `nmap` XML instead of scanning live:
+
+```bash
+go run ./cmd/netmap --nmap-xml ./scan.xml
+```
+
+Attach a MikroTik router through REST:
+
+```bash
+go run ./cmd/netmap \
+  --subnets 192.168.88.0/24 \
+  --mikrotik-url https://192.168.88.1/rest \
+  --mikrotik-user admin \
+  --mikrotik-password 'secret' \
+  --mikrotik-insecure
+```
+
+## Prerequisites
+
+For the Go rewrite:
+
+* Go 1.22+
+* `nmap`
+* `iproute2` if you want the app to infer local interface subnets and the default gateway automatically
+
+For MikroTik REST integration:
+
+* RouterOS v7 REST API enabled
+* a user with the permissions needed to read bridge and addressing data
+* HTTPS preferred; `--mikrotik-insecure` is there for self-signed lab setups
+
+## Development Notes
+
+The first pass intentionally avoids overfitting to the old implementation:
+
+* no Perl dependency
+* no `traceroute` dependency
+* no GoJS dependency
+* no generated single-file HTML artifact
+
+The topology UI is still an MVP. The next logical steps are:
+
+* persist scan snapshots
+* diff scans over time
+* correlate MikroTik bridge ports with discovered hosts by MAC and ARP data
+* add LLDP/CDP neighbor ingestion where available
+* replace the current simple renderer with a richer client-side graph layout while keeping the JSON API stable
+
+## Legacy Perl Tool
+
+The legacy entrypoint is still present:
+
+```bash
+./nmapscan.pl -subnet 192.168.1.0/24
+```
+
+That path still requires:
+
+* Perl
+* `nmap`
+* `traceroute`
+* `iproute`
+* `go.js`
+
+and it still emits the original static [`map.html`](./map.html).

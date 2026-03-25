@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>netmap</title>
+  <link rel="stylesheet" href="/web/app.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Go Rewrite Prototype</p>
+        <h1>Topology first. VLAN mistakes visible.</h1>
+        <p class="lede">Structured `nmap` discovery plus MikroTik bridge VLAN analysis, without the Perl monolith or a proprietary diagramming library.</p>
+      </div>
+      <div class="summary" id="summary"></div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Diagram</h2>
+          <p id="meta"></p>
+        </div>
+        <div class="canvas-wrap">
+          <svg id="links" aria-hidden="true"></svg>
+          <div id="canvas" class="canvas"></div>
+        </div>
+      </section>
+
+      <aside class="panel sidebar">
+        <div class="panel-head">
+          <h2>Findings</h2>
+          <p>MikroTik-specific checks land here.</p>
+        </div>
+        <div id="findings" class="findings"></div>
+      </aside>
+    </main>
+
+    <section class="panel notes">
+      <div class="panel-head">
+        <h2>Notes</h2>
+      </div>
+      <ul id="notes"></ul>
+    </section>
+  </div>
+  <script src="/web/app.js"></script>
+</body>
+</html>
