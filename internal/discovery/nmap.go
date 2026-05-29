@@ -62,15 +62,17 @@ func Parse(data []byte) ([]model.Host, error) {
 
 func profileArgs(profile string) []string {
 	base := []string{"-n", "-oX", "-"}
+	scripts := []string{"--script", "broadcast-lldp-discovery,broadcast-cdp-discovery"}
+	
 	switch strings.ToLower(strings.TrimSpace(profile)) {
 	case "", "discovery":
-		return append(base, "-sn")
+		return append(append(base, "-sn"), scripts...)
 	case "balanced":
-		return append(base, "-sS", "-sV", "--top-ports", "50", "-O")
+		return append(append(base, "-sS", "-sV", "--top-ports", "50", "-O"), scripts...)
 	case "deep":
-		return append(base, "-A")
+		return append(append(base, "-A"), scripts...)
 	default:
-		return append(base, "-sn")
+		return append(append(base, "-sn"), scripts...)
 	}
 }
 
@@ -130,6 +132,16 @@ func toHost(raw nmapHost) model.Host {
 		}
 		return host.Ports[i].Number < host.Ports[j].Number
 	})
+	
+	// Parse LLDP/CDP neighbors from hostscripts
+	for _, script := range raw.HostScripts.Scripts {
+		if script.ID == "broadcast-lldp-discovery" || script.ID == "lldp-discovery" {
+			host.Neighbors = append(host.Neighbors, parseLLDPNeighbors(script)...)
+		} else if script.ID == "broadcast-cdp-discovery" || script.ID == "cdp-discovery" {
+			host.Neighbors = append(host.Neighbors, parseCDPNeighbors(script)...)
+		}
+	}
+	
 	return host
 }
 
@@ -157,6 +169,24 @@ func dedupeHosts(hosts []model.Host) []model.Host {
 			current.OSFamily = host.OSFamily
 			current.DeviceType = host.DeviceType
 		}
+		// Merge neighbors without duplicates
+		if len(host.Neighbors) > 0 {
+			neighborMap := make(map[string]model.Neighbor)
+			for _, n := range current.Neighbors {
+				key := n.Protocol + ":" + n.ChassisID + n.DeviceID + n.PortID
+				neighborMap[key] = n
+			}
+			for _, n := range host.Neighbors {
+				key := n.Protocol + ":" + n.ChassisID + n.DeviceID + n.PortID
+				if _, exists := neighborMap[key]; !exists {
+					neighborMap[key] = n
+				}
+			}
+			current.Neighbors = make([]model.Neighbor, 0, len(neighborMap))
+			for _, n := range neighborMap {
+				current.Neighbors = append(current.Neighbors, n)
+			}
+		}
 		merged[host.IP] = current
 	}
 
@@ -175,13 +205,35 @@ type nmapRun struct {
 }
 
 type nmapHost struct {
-	Status    nmapStatus    `xml:"status"`
-	Addresses []nmapAddress `xml:"address"`
-	Hostnames nmapHostnames `xml:"hostnames"`
-	Ports     nmapPorts     `xml:"ports"`
-	OS        nmapOS        `xml:"os"`
-	Times     nmapTimes     `xml:"times"`
-	Distance  nmapDistance  `xml:"distance"`
+	Status      nmapStatus      `xml:"status"`
+	Addresses   []nmapAddress   `xml:"address"`
+	Hostnames   nmapHostnames   `xml:"hostnames"`
+	Ports       nmapPorts       `xml:"ports"`
+	OS          nmapOS          `xml:"os"`
+	Times       nmapTimes       `xml:"times"`
+	Distance    nmapDistance    `xml:"distance"`
+	HostScripts nmapHostScripts `xml:"hostscript"`
+}
+
+type nmapHostScripts struct {
+	Scripts []nmapScript `xml:"script"`
+}
+
+type nmapScript struct {
+	ID     string            `xml:"id,attr"`
+	Output string            `xml:"output,attr"`
+	Tables []nmapScriptTable `xml:"table"`
+}
+
+type nmapScriptTable struct {
+	Key   string             `xml:"key,attr"`
+	Elems []nmapScriptElem   `xml:"elem"`
+	Table []nmapScriptTable  `xml:"table"`
+}
+
+type nmapScriptElem struct {
+	Key   string `xml:"key,attr"`
+	Value string `xml:",chardata"`
 }
 
 type nmapStatus struct {
@@ -240,3 +292,111 @@ type nmapDistance struct {
 type intAsString string
 
 func (s intAsString) String() string { return string(s) }
+
+func parseLLDPNeighbors(script nmapScript) []model.Neighbor {
+	var neighbors []model.Neighbor
+	
+	// LLDP data is typically in nested tables
+	for _, table := range script.Tables {
+		neighbor := model.Neighbor{
+			Protocol: "lldp",
+		}
+		
+		// Parse both direct elems and nested table elems
+		for _, elem := range table.Elems {
+			switch strings.ToLower(elem.Key) {
+			case "chassis-id", "chassis id":
+				neighbor.ChassisID = strings.TrimSpace(elem.Value)
+			case "port-id", "port id":
+				neighbor.PortID = strings.TrimSpace(elem.Value)
+			case "system-name", "system name":
+				neighbor.SystemName = strings.TrimSpace(elem.Value)
+			case "system-description", "system description":
+				neighbor.SystemDescription = strings.TrimSpace(elem.Value)
+			case "capabilities":
+				neighbor.Capabilities = strings.TrimSpace(elem.Value)
+			case "management-address", "management address":
+				neighbor.ManagementAddress = strings.TrimSpace(elem.Value)
+			}
+		}
+		
+		// Parse nested tables
+		for _, nestedTable := range table.Table {
+			for _, elem := range nestedTable.Elems {
+				switch strings.ToLower(elem.Key) {
+				case "chassis-id", "chassis id":
+					neighbor.ChassisID = strings.TrimSpace(elem.Value)
+				case "port-id", "port id":
+					neighbor.PortID = strings.TrimSpace(elem.Value)
+				case "system-name", "system name":
+					neighbor.SystemName = strings.TrimSpace(elem.Value)
+				case "system-description", "system description":
+					neighbor.SystemDescription = strings.TrimSpace(elem.Value)
+				case "capabilities":
+					neighbor.Capabilities = strings.TrimSpace(elem.Value)
+				case "management-address", "management address":
+					neighbor.ManagementAddress = strings.TrimSpace(elem.Value)
+				}
+			}
+		}
+		
+		// Only add if we have meaningful data
+		if neighbor.ChassisID != "" || neighbor.SystemName != "" || neighbor.PortID != "" {
+			neighbors = append(neighbors, neighbor)
+		}
+	}
+	
+	return neighbors
+}
+
+func parseCDPNeighbors(script nmapScript) []model.Neighbor {
+	var neighbors []model.Neighbor
+	
+	// CDP data is typically in nested tables
+	for _, table := range script.Tables {
+		neighbor := model.Neighbor{
+			Protocol: "cdp",
+		}
+		
+		// Parse both direct elems and nested table elems
+		for _, elem := range table.Elems {
+			switch strings.ToLower(elem.Key) {
+			case "device-id", "device id":
+				neighbor.DeviceID = strings.TrimSpace(elem.Value)
+			case "port-id", "port id":
+				neighbor.PortID = strings.TrimSpace(elem.Value)
+			case "platform":
+				neighbor.Platform = strings.TrimSpace(elem.Value)
+			case "capabilities":
+				neighbor.Capabilities = strings.TrimSpace(elem.Value)
+			case "ip-address", "ip address":
+				neighbor.ManagementAddress = strings.TrimSpace(elem.Value)
+			}
+		}
+		
+		// Parse nested tables
+		for _, nestedTable := range table.Table {
+			for _, elem := range nestedTable.Elems {
+				switch strings.ToLower(elem.Key) {
+				case "device-id", "device id":
+					neighbor.DeviceID = strings.TrimSpace(elem.Value)
+				case "port-id", "port id":
+					neighbor.PortID = strings.TrimSpace(elem.Value)
+				case "platform":
+					neighbor.Platform = strings.TrimSpace(elem.Value)
+				case "capabilities":
+					neighbor.Capabilities = strings.TrimSpace(elem.Value)
+				case "ip-address", "ip address":
+					neighbor.ManagementAddress = strings.TrimSpace(elem.Value)
+				}
+			}
+		}
+		
+		// Only add if we have meaningful data
+		if neighbor.DeviceID != "" || neighbor.PortID != "" || neighbor.Platform != "" {
+			neighbors = append(neighbors, neighbor)
+		}
+	}
+	
+	return neighbors
+}
