@@ -17,6 +17,7 @@ type Summary struct {
 	Hosts         int `json:"hosts"`
 	Subnets       int `json:"subnets"`
 	OpenPorts     int `json:"openPorts"`
+	Neighbors     int `json:"neighbors"`
 	Findings      int `json:"findings"`
 	MikroTikPorts int `json:"mikroTikPorts"`
 }

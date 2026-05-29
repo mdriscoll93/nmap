@@ -33,6 +33,11 @@ The new prototype currently provides:
   * `balanced` adds service and OS fingerprinting
   * `deep` uses `-A`
 * import of existing `nmap` XML files through `--nmap-xml`
+* LLDP/CDP neighbor discovery using nmap scripts:
+  * automatically runs `broadcast-lldp-discovery` and `broadcast-cdp-discovery`
+  * parses neighbor relationships from nmap XML output
+  * displays neighbor links in the topology graph
+  * supports both LLDP (chassis ID, port ID, system name) and CDP (device ID, platform, port ID) protocols
 * optional MikroTik RouterOS REST collection for:
   * `/interface/bridge`
   * `/interface/bridge/port`
@@ -105,7 +110,7 @@ The topology UI is still an MVP. The next logical steps are:
 * persist scan snapshots
 * diff scans over time
 * correlate MikroTik bridge ports with discovered hosts by MAC and ARP data
-* add LLDP/CDP neighbor ingestion where available
+* ~~add LLDP/CDP neighbor ingestion where available~~ ✅ Completed
 * replace the current simple renderer with a richer client-side graph layout while keeping the JSON API stable
 
 ## Legacy Perl Tool
