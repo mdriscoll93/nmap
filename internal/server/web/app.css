@@ -252,6 +252,38 @@ line {
   stroke-width: 2;
 }
 
+line.neighbor-link {
+  stroke: var(--accent-2);
+  stroke-width: 2;
+  opacity: 0.7;
+  stroke-dasharray: 5, 5;
+}
+
+line.neighbor-link.lldp {
+  stroke: #10b981;
+}
+
+line.neighbor-link.cdp {
+  stroke: #8b5cf6;
+}
+
+.node .neighbors {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+  color: var(--accent-2);
+}
+
+.node .neighbors strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
 @keyframes rise {
   from {
     opacity: 0;

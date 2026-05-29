@@ -21,6 +21,7 @@ func Topology() *model.Topology {
 			Label:      "core-router\n10.10.10.1",
 			IP:         "10.10.10.1",
 			Hostname:   "core-router",
+			MAC:        "00:11:22:33:44:55",
 			Status:     "up",
 			DeviceType: "router",
 			OSFamily:   "RouterOS",
@@ -28,18 +29,38 @@ func Topology() *model.Topology {
 				{Protocol: "tcp", Number: 80, State: "open", Service: "www"},
 				{Protocol: "tcp", Number: 8729, State: "open", Service: "api-ssl"},
 			},
+			Neighbors: []model.Neighbor{
+				{
+					Protocol:     "lldp",
+					ChassisID:    "aa:bb:cc:dd:ee:ff",
+					PortID:       "eth1",
+					SystemName:   "hypervisor-1",
+					Capabilities: "Bridge",
+				},
+			},
 		},
 		{
 			ID:         "host:10.10.10.50",
 			Label:      "hypervisor-1\n10.10.10.50",
 			IP:         "10.10.10.50",
 			Hostname:   "hypervisor-1",
+			MAC:        "aa:bb:cc:dd:ee:ff",
 			Status:     "up",
 			DeviceType: "hypervisor",
 			OSFamily:   "Linux",
 			Ports: []model.Port{
 				{Protocol: "tcp", Number: 22, State: "open", Service: "ssh"},
 				{Protocol: "tcp", Number: 443, State: "open", Service: "https"},
+			},
+			Neighbors: []model.Neighbor{
+				{
+					Protocol:          "lldp",
+					ChassisID:         "00:11:22:33:44:55",
+					PortID:            "ether1",
+					SystemName:        "core-router",
+					SystemDescription: "MikroTik RouterOS",
+					Capabilities:      "Router",
+				},
 			},
 		},
 		{

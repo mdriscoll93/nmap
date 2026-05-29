@@ -51,9 +51,14 @@ func Build(opts BuildOptions) (*model.Topology, error) {
 
 	hostCount := 0
 	portCount := 0
+	neighborCount := 0
+	hostByName := make(map[string]string) // Map hostname/system name to host ID
+	hostByMAC := make(map[string]string)  // Map MAC to host ID
+	
 	for _, host := range sortHosts(opts.Hosts) {
 		hostCount++
 		portCount += len(host.Ports)
+		neighborCount += len(host.Neighbors)
 		prefix, ok := prefixForIP(host.IP, prefixes)
 		if !ok {
 			continue
@@ -70,6 +75,28 @@ func Build(opts BuildOptions) (*model.Topology, error) {
 			Target: subnets[idx].ID,
 			Kind:   "member-of",
 		})
+		
+		// Build lookup maps for neighbor resolution
+		if host.Hostname != "" {
+			hostByName[host.Hostname] = host.ID
+		}
+		if host.MAC != "" {
+			hostByMAC[host.MAC] = host.ID
+		}
+	}
+	
+	// Create neighbor links after all hosts are processed
+	for _, host := range opts.Hosts {
+		for _, neighbor := range host.Neighbors {
+			targetID := resolveNeighborID(neighbor, hostByName, hostByMAC)
+			if targetID != "" {
+				graph.Links = append(graph.Links, model.GraphLink{
+					Source: host.ID,
+					Target: targetID,
+					Kind:   neighbor.Protocol + "-neighbor",
+				})
+			}
+		}
 	}
 
 	if opts.Inventory.DefaultGateway != "" {
@@ -98,6 +125,7 @@ func Build(opts BuildOptions) (*model.Topology, error) {
 			Hosts:         hostCount,
 			Subnets:       len(subnets),
 			OpenPorts:     portCount,
+			Neighbors:     neighborCount,
 			Findings:      len(findings),
 			MikroTikPorts: lenPorts(opts.MikroTik),
 		},
@@ -185,5 +213,46 @@ func buildNotes(opts BuildOptions, subnets []model.Subnet) []string {
 	if len(subnets) == 0 {
 		notes = append(notes, "No subnets were inferred for discovered hosts; pass explicit --subnets to tighten the scan scope.")
 	}
+	neighborCount := 0
+	for _, host := range opts.Hosts {
+		neighborCount += len(host.Neighbors)
+	}
+	if neighborCount > 0 {
+		notes = append(notes, "LLDP/CDP neighbor relationships discovered and included in the topology graph.")
+	}
 	return notes
+}
+
+func resolveNeighborID(neighbor model.Neighbor, hostByName, hostByMAC map[string]string) string {
+	// Try to resolve by system name or device ID
+	if neighbor.SystemName != "" {
+		if id, ok := hostByName[neighbor.SystemName]; ok {
+			return id
+		}
+	}
+	if neighbor.DeviceID != "" {
+		if id, ok := hostByName[neighbor.DeviceID]; ok {
+			return id
+		}
+	}
+	
+	// Try to resolve by chassis ID (MAC address)
+	if neighbor.ChassisID != "" {
+		// Normalize MAC address format
+		normalized := strings.ToLower(strings.ReplaceAll(neighbor.ChassisID, "-", ":"))
+		if id, ok := hostByMAC[normalized]; ok {
+			return id
+		}
+		// Try original format
+		if id, ok := hostByMAC[neighbor.ChassisID]; ok {
+			return id
+		}
+	}
+	
+	// Try to resolve by management address
+	if neighbor.ManagementAddress != "" {
+		return "host:" + neighbor.ManagementAddress
+	}
+	
+	return ""
 }

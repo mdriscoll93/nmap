@@ -17,6 +17,7 @@ type Summary struct {
 	Hosts         int `json:"hosts"`
 	Subnets       int `json:"subnets"`
 	OpenPorts     int `json:"openPorts"`
+	Neighbors     int `json:"neighbors"`
 	Findings      int `json:"findings"`
 	MikroTikPorts int `json:"mikroTikPorts"`
 }
@@ -42,6 +43,7 @@ type Host struct {
 	Latency    string            `json:"latency,omitempty"`
 	Distance   int               `json:"distance,omitempty"`
 	Ports      []Port            `json:"ports,omitempty"`
+	Neighbors  []Neighbor        `json:"neighbors,omitempty"`
 	Meta       map[string]string `json:"meta,omitempty"`
 }
 
@@ -52,6 +54,18 @@ type Port struct {
 	Service  string `json:"service,omitempty"`
 	Product  string `json:"product,omitempty"`
 	Version  string `json:"version,omitempty"`
+}
+
+type Neighbor struct {
+	Protocol          string `json:"protocol"`
+	ChassisID         string `json:"chassisId,omitempty"`
+	PortID            string `json:"portId,omitempty"`
+	SystemName        string `json:"systemName,omitempty"`
+	SystemDescription string `json:"systemDescription,omitempty"`
+	Capabilities      string `json:"capabilities,omitempty"`
+	ManagementAddress string `json:"managementAddress,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	DeviceID          string `json:"deviceId,omitempty"`
 }
 
 type Graph struct {

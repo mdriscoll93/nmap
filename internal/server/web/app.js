@@ -13,6 +13,7 @@ function renderSummary(topology) {
     ["Hosts", topology.summary.hosts],
     ["Subnets", topology.summary.subnets],
     ["Open ports", topology.summary.openPorts],
+    ["Neighbors", topology.summary.neighbors || 0],
     ["Findings", topology.summary.findings],
   ];
 
@@ -103,10 +104,35 @@ function renderDiagram(subnets) {
         title: host.hostname || host.ip,
         detail: host.osFamily || host.deviceType || host.status || "host",
         ports: (host.ports || []).slice(0, 4).map((port) => `${port.number}/${port.protocol} ${port.service || port.state}`),
+        neighbors: (host.neighbors || []).map((n) => ({
+          protocol: n.protocol,
+          systemName: n.systemName || n.deviceId,
+          portId: n.portId
+        })),
       };
       nodes.push(hostNode);
       positions.set(host.id, hostNode);
       links.push([host.id, subnet.id]);
+      
+      // Add neighbor links
+      (host.neighbors || []).forEach((neighbor) => {
+        const targetName = neighbor.systemName || neighbor.deviceId;
+        if (targetName) {
+          // Try to find the target by hostname
+          const targetHost = subnets.flatMap(s => s.hosts).find(h => h.hostname === targetName);
+          if (targetHost) {
+            links.push([host.id, targetHost.id, neighbor.protocol]);
+          }
+        }
+        // Fall back to management address
+        if (neighbor.managementAddress) {
+          const targetID = `host:${neighbor.managementAddress}`;
+          if (positions.has(targetID)) {
+            links.push([host.id, targetID, neighbor.protocol]);
+          }
+        }
+      });
+      
       height = Math.max(height, hostNode.y + 180);
     });
   });
@@ -122,13 +148,17 @@ function renderDiagram(subnets) {
       <h3>${escapeHTML(node.title)}</h3>
       <p>${escapeHTML(node.detail)}</p>
       ${node.ports?.length ? `<ul>${node.ports.map((entry) => `<li>${escapeHTML(entry)}</li>`).join("")}</ul>` : ""}
+      ${node.neighbors?.length ? `<div class="neighbors"><strong>Neighbors:</strong> ${node.neighbors.map((n) => `${escapeHTML(n.systemName || 'unknown')} (${escapeHTML(n.protocol)})`).join(', ')}</div>` : ""}
     </article>
   `).join("");
 
-  svg.innerHTML = links.map(([fromID, toID]) => {
+  svg.innerHTML = links.map((link) => {
+    const [fromID, toID, protocol] = typeof link === 'object' ? link : [link[0], link[1], link[2]];
     const from = positions.get(fromID);
     const to = positions.get(toID);
-    return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}"></line>`;
+    if (!from || !to) return '';
+    const className = protocol ? `neighbor-link ${protocol}` : '';
+    return `<line class="${className}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}"></line>`;
   }).join("");
 }
 
