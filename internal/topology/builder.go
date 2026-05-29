@@ -52,9 +52,11 @@ func Build(opts BuildOptions) (*model.Topology, error) {
 	hostCount := 0
 	portCount := 0
 	neighborCount := 0
-	hostByName := make(map[string]string) // Map hostname/system name to host ID
-	hostByMAC := make(map[string]string)  // Map MAC to host ID
-	
+	hostByName := make(map[string]string) // Map hostname/system name to host ID.
+	hostByMAC := make(map[string]string)  // Map MAC to host ID.
+	hostByIP := make(map[string]string)   // Map management IP to host ID.
+	hostInGraph := make(map[string]struct{})
+
 	for _, host := range sortHosts(opts.Hosts) {
 		hostCount++
 		portCount += len(host.Ports)
@@ -75,20 +77,28 @@ func Build(opts BuildOptions) (*model.Topology, error) {
 			Target: subnets[idx].ID,
 			Kind:   "member-of",
 		})
-		
+
+		hostInGraph[host.ID] = struct{}{}
+
 		// Build lookup maps for neighbor resolution
 		if host.Hostname != "" {
-			hostByName[host.Hostname] = host.ID
+			hostByName[normalizeHostKey(host.Hostname)] = host.ID
 		}
 		if host.MAC != "" {
-			hostByMAC[host.MAC] = host.ID
+			hostByMAC[normalizeMAC(host.MAC)] = host.ID
+		}
+		if host.IP != "" {
+			hostByIP[strings.TrimSpace(host.IP)] = host.ID
 		}
 	}
-	
+
 	// Create neighbor links after all hosts are processed
 	for _, host := range opts.Hosts {
+		if _, ok := hostInGraph[host.ID]; !ok {
+			continue
+		}
 		for _, neighbor := range host.Neighbors {
-			targetID := resolveNeighborID(neighbor, hostByName, hostByMAC)
+			targetID := resolveNeighborID(neighbor, hostByName, hostByMAC, hostByIP)
 			if targetID != "" {
 				graph.Links = append(graph.Links, model.GraphLink{
 					Source: host.ID,
@@ -223,36 +233,47 @@ func buildNotes(opts BuildOptions, subnets []model.Subnet) []string {
 	return notes
 }
 
-func resolveNeighborID(neighbor model.Neighbor, hostByName, hostByMAC map[string]string) string {
+func resolveNeighborID(neighbor model.Neighbor, hostByName, hostByMAC, hostByIP map[string]string) string {
 	// Try to resolve by system name or device ID
 	if neighbor.SystemName != "" {
-		if id, ok := hostByName[neighbor.SystemName]; ok {
+		if id, ok := hostByName[normalizeHostKey(neighbor.SystemName)]; ok {
 			return id
 		}
 	}
 	if neighbor.DeviceID != "" {
-		if id, ok := hostByName[neighbor.DeviceID]; ok {
+		if id, ok := hostByName[normalizeHostKey(neighbor.DeviceID)]; ok {
 			return id
 		}
 	}
-	
+
 	// Try to resolve by chassis ID (MAC address)
 	if neighbor.ChassisID != "" {
-		// Normalize MAC address format
-		normalized := strings.ToLower(strings.ReplaceAll(neighbor.ChassisID, "-", ":"))
-		if id, ok := hostByMAC[normalized]; ok {
-			return id
-		}
-		// Try original format
-		if id, ok := hostByMAC[neighbor.ChassisID]; ok {
+		if id, ok := hostByMAC[normalizeMAC(neighbor.ChassisID)]; ok {
 			return id
 		}
 	}
-	
+
 	// Try to resolve by management address
 	if neighbor.ManagementAddress != "" {
-		return "host:" + neighbor.ManagementAddress
+		if id, ok := hostByIP[strings.TrimSpace(neighbor.ManagementAddress)]; ok {
+			return id
+		}
 	}
-	
+
 	return ""
+}
+
+func normalizeHostKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.TrimSuffix(value, ".")
+	if i := strings.Index(value, "."); i > 0 {
+		value = value[:i]
+	}
+	return value
+}
+
+func normalizeMAC(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", ":")
+	return value
 }
